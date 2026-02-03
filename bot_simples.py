@@ -7,10 +7,8 @@ import os
 import asyncio
 import logging
 import aiohttp
-import redis
 import json
 import base64
-from datetime import timedelta
 from flask import Flask, request
 from telegram import Update
 from telegram.constants import ChatAction
@@ -28,7 +26,6 @@ Crie estas variáveis no Railway:
 TELEGRAM_TOKEN = token do seu bot (@BotFather)
 GROK_API_KEY = sua key do Grok (console.x.ai)
 ADMIN_IDS = seu ID do Telegram (@userinfobot)
-REDIS_URL = (criado automaticamente pelo Railway)
 
 ═══════════════════════════════════════════════════════════════
 """
@@ -43,7 +40,6 @@ logger = logging.getLogger(__name__)
 # Variáveis de ambiente (Railway)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 GROK_API_KEY = os.getenv("GROK_API_KEY", "")
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 PORT = int(os.getenv("PORT", 8080))
 
 webhook_url = os.getenv("WEBHOOK_BASE_URL", "")
@@ -57,39 +53,21 @@ ADMIN_IDS = set(map(int, os.getenv("ADMIN_IDS", "0").split(",")))
 logger.info(f"🚀 Iniciando bot...")
 logger.info(f"📍 Webhook: {WEBHOOK_BASE_URL}{WEBHOOK_PATH}")
 
-# Redis
-try:
-    r = redis.from_url(REDIS_URL, decode_responses=True)
-    r.ping()
-    logger.info("✅ Redis conectado")
-except Exception as e:
-    logger.error(f"❌ Redis erro: {e}")
-    raise
-
 # Configurações Grok
 MODELO = "grok-beta"
 GROK_API_URL = "https://api.x.ai/v1/chat/completions"
 MAX_MEMORIA = 10
 
-# ================= FUNÇÕES DE MEMÓRIA =================
-def memory_key(uid):
-    return f"memory:{uid}"
+# ================= MEMÓRIA EM MEMÓRIA =================
+# Dicionário em memória: {user_id: [mensagens]}
+# Nota: se o bot reiniciar, as conversas são perdidas.
+_memory_store = {}
 
 def get_memory(uid):
-    try:
-        data = r.get(memory_key(uid))
-        if data:
-            return json.loads(data)
-        return []
-    except:
-        return []
+    return _memory_store.get(uid, [])
 
 def save_memory(uid, messages):
-    try:
-        recent = messages[-MAX_MEMORIA:] if len(messages) > MAX_MEMORIA else messages
-        r.setex(memory_key(uid), timedelta(days=7), json.dumps(recent, ensure_ascii=False))
-    except Exception as e:
-        logger.error(f"Erro ao salvar memória: {e}")
+    _memory_store[uid] = messages[-MAX_MEMORIA:] if len(messages) > MAX_MEMORIA else messages
 
 def add_to_memory(uid, role, content):
     memory = get_memory(uid)
@@ -97,11 +75,9 @@ def add_to_memory(uid, role, content):
     save_memory(uid, memory)
 
 def clear_memory(uid):
-    try:
-        r.delete(memory_key(uid))
+    if uid in _memory_store:
+        del _memory_store[uid]
         logger.info(f"🗑️ Memória limpa: {uid}")
-    except Exception as e:
-        logger.error(f"Erro ao limpar memória: {e}")
 
 # ================= PROMPT =================
 def build_prompt():
@@ -236,11 +212,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return
     
-    try:
-        total_keys = len(r.keys("memory:*"))
-        await update.message.reply_text(f"📊 Usuários com conversas: {total_keys}")
-    except:
-        await update.message.reply_text("Erro ao buscar stats")
+    await update.message.reply_text(f"📊 Usuários com conversas: {len(_memory_store)}")
 
 async def clearmemory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
@@ -313,7 +285,6 @@ async def setup_webhook():
         logger.error(f"Erro webhook: {e}")
 
 if __name__ == "__main__":
-    # Validação de variáveis (só valida quando o app roda, não no build)
     if not TELEGRAM_TOKEN:
         logger.error("❌ Configure a variável TELEGRAM_TOKEN no Railway")
         exit(1)
