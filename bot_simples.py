@@ -54,7 +54,7 @@ logger.info(f"🚀 Iniciando bot...")
 logger.info(f"📍 Webhook: {WEBHOOK_BASE_URL}{WEBHOOK_PATH}")
 
 # Configurações Grok
-MODELO = "grok-beta"
+MODELO = "grok-3"
 GROK_API_URL = "https://api.x.ai/v1/chat/completions"
 MAX_MEMORIA = 10
 
